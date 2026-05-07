@@ -26,7 +26,7 @@ Features:
 **Installation**
 1. Donwnload .zip file from Releases
 2. Unzip
-3. Copy directory into libraries folder of your Arduion environment
+3. Copy directory into libraries folder of your Arduio environment
 
 [![Futaba-VFD-16bit-ESP32](https://github.com/3KUdelta/Futaba-VFD-16bit_ESP32/blob/main/pics/VFD_16bit.png)](https://github.com/3KUdelta/Futaba-VFD-16bit_ESP32)
 
