@@ -22,7 +22,11 @@ Features:
 - Works with 8 digits and with 16 digits (must be set in vfd_controls.h)
 - Simple functions to control the display
 - Includes Umlaute (äöüÄÖÜ) and the degree sign (°)
-- vfd_controls.h includes all functions (works similar as a library)
+
+**Installation**
+1. Donwnload .zip file from Releases
+2. Unzip
+3. Copy directory into libraries folder of your Arduion environment
 
 [![Futaba-VFD-16bit-ESP32](https://github.com/3KUdelta/Futaba-VFD-16bit_ESP32/blob/main/pics/VFD_16bit.png)](https://github.com/3KUdelta/Futaba-VFD-16bit_ESP32)
 
