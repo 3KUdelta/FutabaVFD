@@ -1,0 +1,30 @@
+# Syntax colouring map for FutabaVFD
+# Columns are separated by a SINGLE TAB - do not replace with spaces.
+
+FutabaVFD	KEYWORD1
+
+begin	KEYWORD2
+end	KEYWORD2
+update	KEYWORD2
+setBrightness	KEYWORD2
+clear	KEYWORD2
+show	KEYWORD2
+standby	KEYWORD2
+writeChar	KEYWORD2
+writeString	KEYWORD2
+print	KEYWORD2
+printScroll	KEYWORD2
+stopScroll	KEYWORD2
+isScrolling	KEYWORD2
+blink	KEYWORD2
+stopBlink	KEYWORD2
+isBlinking	KEYWORD2
+printVerticalIn	KEYWORD2
+printVerticalOut	KEYWORD2
+scrollVertical	KEYWORD2
+stopVertical	KEYWORD2
+isVerticalActive	KEYWORD2
+digits	KEYWORD2
+
+FUTABA_VFD_DEFAULT_SPI_HZ	LITERAL1
+FUTABA_VFD_SCROLL_BUF	LITERAL1
