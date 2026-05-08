@@ -9,6 +9,12 @@
   Pin defaults match the original sketch:
     DIN  = 23 (MOSI), CLK = 18 (SCK), CS = 5 (SS), RESET = 19 (8-bit only)
 
+  v2.0.1 - 2025
+    - Fixed: _initialised guard prevented setBrightness/standby/clear/show
+      from executing during begin(), leaving the display dark after power-cycle.
+    - Fixed: SPI bus default fallback now uses SPI3_HOST on ESP32 Arduino
+      Core 3.x where the VSPI macro is no longer defined.
+
   License: MIT
 */
 
@@ -38,9 +44,11 @@
 // On ESP32-S2/S3/C3 the macro is named differently; we accept any int.
 #ifndef FUTABA_VFD_DEFAULT_BUS
   #if defined(VSPI)
-    #define FUTABA_VFD_DEFAULT_BUS VSPI
+    #define FUTABA_VFD_DEFAULT_BUS VSPI              // Core 2.x / Core 3.x classic ESP32
+  #elif defined(SPI3_HOST)
+    #define FUTABA_VFD_DEFAULT_BUS SPI3_HOST          // Core 3.x without VSPI macro (S2/S3/C3)
   #else
-    #define FUTABA_VFD_DEFAULT_BUS 0
+    #define FUTABA_VFD_DEFAULT_BUS 0                   // non-ESP32 fallback
   #endif
 #endif
 
