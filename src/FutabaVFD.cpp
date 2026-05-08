@@ -1,5 +1,12 @@
 /*
   FutabaVFD.cpp - implementation. See FutabaVFD.h for API docs.
+
+  v2.0.1 - 2025
+    - Fixed: _initialised is now set BEFORE setBrightness/standby/clear/show
+      in begin(). Previously these calls were guarded by if(!_initialised)
+      and silently returned, leaving the display dark after a cold power-cycle.
+    - Re-assert pinMode(CS, OUTPUT) after SPI.begin() for ESP32 Core 3.x
+      compatibility.
 */
 
 #include "FutabaVFD.h"
@@ -11,7 +18,7 @@ static const uint8_t CMD_SET_DIGITS   = 0xE0; // followed by N-1
 static const uint8_t CMD_BRIGHTNESS   = 0xE4; // followed by 0..255
 static const uint8_t CMD_RUN          = 0xEC; // leave standby
 static const uint8_t CMD_STANDBY      = 0xED; // enter standby
-static const uint8_t CMD_REFRESH      = 0xE8; // commit DCRAM to grid
+static const uint8_t CMD_REFRESH      = 0xE8; // commit DCRAM to grid / display light ON
 
 // ---------------------------------------------------------------------------
 //  Construction
@@ -60,6 +67,10 @@ bool FutabaVFD::begin(int8_t sclk, int8_t miso, int8_t mosi,
 #if defined(ESP32)
   _spi = new SPIClass(_spiBusId);
   _spi->begin(sclk, miso, mosi, _pinCS);
+  // Re-assert CS pin mode after SPI.begin() — on some ESP32 Arduino Core
+  // versions, SPI.begin() can reconfigure the SS pin.
+  pinMode(_pinCS, OUTPUT);
+  digitalWrite(_pinCS, HIGH);
 #else
   _spi = &SPI;
   _spi->begin();
@@ -73,12 +84,18 @@ bool FutabaVFD::begin(int8_t sclk, int8_t miso, int8_t mosi,
   selectHigh();
   endTxn();
 
+  // FIX v2.0.1: Set _initialised = true BEFORE calling setBrightness(),
+  // standby(), clear(), show(). These methods all have an early-return
+  // guard "if (!_initialised) return;" which previously caused them to
+  // silently skip during begin(), leaving the display dark after a cold
+  // power-cycle. On a software reset (e.g. after flashing) the display
+  // retained its previous state, masking this bug.
+  _initialised = true;
+
   setBrightness(50);
   standby(false);
   clear();
   show();
-
-  _initialised = true;
 
   // Optional non-essential visual self-test. Off by default because it
   // contains short delay() calls (8 ms per digit).
