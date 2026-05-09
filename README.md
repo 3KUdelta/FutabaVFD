@@ -281,7 +281,7 @@ API splits these because they have very different runtime characteristics.
 
 ## Changelog
 
-### v2.0.1 (2025)
+### v2.0.1 (2026)
 
 **Bug fixes:**
 - **Critical: display dark after power-cycle.** The `_initialised` guard flag
@@ -307,7 +307,7 @@ API splits these because they have very different runtime characteristics.
   the reader time to see the start of the message. The hold is also applied
   on every loop restart.
 
-### v2.0.0 (2025)
+### v2.0.0 (2026)
 
 - Initial library release. Class-based refactor of `vfd_controls.h` with
   non-blocking horizontal scroll, blink, and pixel-accurate vertical
