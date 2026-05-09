@@ -117,10 +117,12 @@ public:
   // ---------------------------------------------------------------------
 
   // Scroll a long string from right to left at the given step interval (ms).
+  // holdMs is the initial pause before scrolling starts (default 500ms),
+  // giving the reader time to see the beginning of the message.
   // If loop_ is true the message restarts after the last char leaves the
   // visible area. While scrolling, isScrolling() returns true.
-  void printScroll(const String& s, uint16_t stepMs = 250, bool loop_ = true);
-  void printScroll(const char* s,   uint16_t stepMs = 250, bool loop_ = true);
+  void printScroll(const String& s, uint16_t stepMs = 250, bool loop_ = true, uint16_t holdMs = 500);
+  void printScroll(const char* s,   uint16_t stepMs = 250, bool loop_ = true, uint16_t holdMs = 500);
 
   // Stop any running scroll animation. Display content is left as-is.
   void stopScroll();
@@ -229,7 +231,9 @@ private:
   // scroll
   bool         _scrollActive;
   bool         _scrollLoop;
+  bool         _scrollHolding;       // true = in initial hold phase before scrolling
   uint16_t     _scrollStepMs;
+  uint16_t     _scrollHoldMs;        // initial pause before first scroll step
   uint32_t     _scrollLastMs;
   uint16_t     _scrollPos;          // current left-edge offset into _scrollBuf
   size_t       _scrollLen;          // valid bytes in _scrollBuf
