@@ -27,12 +27,13 @@ class-based library. Three architectural changes:
 
 - Works with 8-digit and 16-digit modules (set per instance, not at compile time)
 - Direct API: `print`, `writeString`, `writeChar`, `setBrightness`, `clear`, `standby`
-- Non-blocking horizontal scroll (`printScroll`)
+- Non-blocking horizontal scroll (`printScroll`) with configurable initial hold time
 - Non-blocking blink (`blink`)
 - Pixel-accurate vertical drop-in / drop-out / endless scroll
 - UTF-8 input with German umlauts (`äöüÄÖÜ`) and degree sign (`°`)
 - Embedded 5×7 font (~500 bytes flash, PROGMEM)
 - Multiple display instances on different SPI buses
+- Compatible with ESP32 Arduino Core 2.x and 3.x
 
 [![Futaba-VFD-16bit-ESP32](https://github.com/3KUdelta/Futaba-VFD-16bit_ESP32/raw/main/pics/VFD_16bit.png)](https://github.com/3KUdelta/Futaba-VFD-16bit_ESP32)
 
@@ -59,6 +60,10 @@ This module was bought here: <https://www.aliexpress.com/item/1005001498957894.h
 The 8-digit module additionally needs `EN` solder-bridged to +5 V, and
 `RESET` held high (pulse low to reset).
 
+**Note on MISO:** Even if the display has no data output, pass a valid MISO
+pin (e.g. 19) to `begin()` rather than `-1`. Some ESP32 Arduino Core versions
+do not properly configure the SPI bus when MISO is set to `-1`.
+
 ## Quick start
 
 ```cpp
@@ -67,7 +72,7 @@ The 8-digit module additionally needs `EN` solder-bridged to +5 V, and
 FutabaVFD vfd(16, /*CS*/5, /*RESET*/-1);
 
 void setup() {
-  vfd.begin(/*SCLK*/18, /*MISO*/-1, /*MOSI*/23);
+  vfd.begin(/*SCLK*/18, /*MISO*/19, /*MOSI*/23);
   vfd.setBrightness(120);
   vfd.printScroll("hifilabor.ch  -  Futaba VFD demo  -  ", 200, true);
 }
@@ -106,7 +111,7 @@ specials: `Ä ä Ö ö Ü ü °`.
 
 | Method | |
 |--------|---|
-| `printScroll(text, stepMs=250, loop=true)` | Right-to-left horizontal scroll. |
+| `printScroll(text, stepMs=250, loop=true, holdMs=500)` | Right-to-left horizontal scroll. `holdMs` pauses the text before scrolling starts, giving the reader time to see the beginning of the message. The hold is also applied on every loop restart. Set `holdMs=0` for immediate scrolling. |
 | `stopScroll()` / `isScrolling()` | |
 | `blink(periodMs)` | Toggles standby for a soft blink. |
 | `stopBlink()` / `isBlinking()` | |
@@ -153,6 +158,40 @@ Four sketches ship with the library:
 Note that the old `VFD_WriteStr()` had two behaviours rolled into one: pad
 short strings, scroll long strings with `delay(100)` between steps. The new
 API splits these because they have very different runtime characteristics.
+
+## Changelog
+
+### v2.0.1 (2025)
+
+**Bug fixes:**
+- **Critical: display dark after power-cycle.** The `_initialised` guard flag
+  was set *after* `setBrightness()`, `standby()`, `clear()`, and `show()`
+  in `begin()`. These methods all check `if (!_initialised) return;` and
+  therefore silently did nothing during initialisation. The display appeared
+  to work after a software reset (flash/upload) because the VFD controller
+  retained its previous state, but after a cold power-cycle (power off/on)
+  the controller started in its default state (all lights off, standby,
+  brightness 0) and was never properly configured.
+  Fix: `_initialised = true` is now set immediately after the `SET_DIGITS`
+  command, before any other controller configuration.
+- **ESP32 Arduino Core 3.x compatibility.** The `VSPI` macro is not defined
+  on ESP32-S2/S3/C3 variants under Core 3.x. The SPI bus default now falls
+  back to `SPI3_HOST` when `VSPI` is unavailable.
+- **CS pin mode after `SPI.begin()`.** On some ESP32 Core versions,
+  `SPI.begin()` reconfigures the SS pin. The library now re-asserts
+  `pinMode(CS, OUTPUT)` after the SPI bus is initialised.
+
+**New features:**
+- **Scroll hold time.** `printScroll()` accepts an optional `holdMs` parameter
+  (default 500 ms) that pauses the display before scrolling begins, giving
+  the reader time to see the start of the message. The hold is also applied
+  on every loop restart.
+
+### v2.0.0 (2025)
+
+- Initial library release. Class-based refactor of `vfd_controls.h` with
+  non-blocking horizontal scroll, blink, and pixel-accurate vertical
+  animations.
 
 ## License
 
