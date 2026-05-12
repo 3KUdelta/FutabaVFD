@@ -1,19 +1,12 @@
 /*
-  FutabaVFD.h - Non-blocking Arduino library for Futaba 8/16-digit
-  Vacuum Fluorescent Displays (e.g. 8-MD-06INKM) on ESP32 via SPI.
+  FutabaVFD.h  –  v3.0
+  Non-blocking Arduino library for Futaba 8/16-digit VFD modules
+  (e.g. 8-MD-06INKM) on ESP32 via SPI.
 
-  Refactor of vfd_controls.h originally by Marc Staehli (2022).
-  Architecture: class-based, instance-owned SPI bus, non-blocking scroll
-  and blink driven by an update() pump in loop().
+  Author: Marc Staehli (hifilabor.ch), 2022-2025.
 
-  Pin defaults match the original sketch:
-    DIN  = 23 (MOSI), CLK = 18 (SCK), CS = 5 (SS), RESET = 19 (8-bit only)
-
-  v2.0.1 - 2025
-    - Fixed: _initialised guard prevented setBrightness/standby/clear/show
-      from executing during begin(), leaving the display dark after power-cycle.
-    - Fixed: SPI bus default fallback now uses SPI3_HOST on ESP32 Arduino
-      Core 3.x where the VSPI macro is no longer defined.
+  Pin defaults (unchanged from original vfd_controls.h):
+    MOSI = 23, SCK = 18, CS = 5, RESET = 19 (8-digit only)
 
   License: MIT
 */
@@ -25,243 +18,223 @@
 #include <SPI.h>
 
 // ---------------------------------------------------------------------------
-//  Configuration
+//  Build-time configuration  (override before #include if needed)
 // ---------------------------------------------------------------------------
-
-// Default SPI clock for the display. The original driver used 100 kHz which
-// is conservative; the M66004 / 6206 controllers happily go higher.
 #ifndef FUTABA_VFD_DEFAULT_SPI_HZ
   #define FUTABA_VFD_DEFAULT_SPI_HZ 100000UL
 #endif
-
-// Maximum supported width. The hardware tops out at 16 digits. The internal
-// scroll buffer is sized to hold any reasonable user message.
 #ifndef FUTABA_VFD_SCROLL_BUF
   #define FUTABA_VFD_SCROLL_BUF 128
 #endif
-
-// SPI bus selector for ESP32. VSPI is the default of the original code.
-// On ESP32-S2/S3/C3 the macro is named differently; we accept any int.
 #ifndef FUTABA_VFD_DEFAULT_BUS
   #if defined(VSPI)
-    #define FUTABA_VFD_DEFAULT_BUS VSPI              // Core 2.x / Core 3.x classic ESP32
+    #define FUTABA_VFD_DEFAULT_BUS VSPI
   #elif defined(SPI3_HOST)
-    #define FUTABA_VFD_DEFAULT_BUS SPI3_HOST          // Core 3.x without VSPI macro (S2/S3/C3)
+    #define FUTABA_VFD_DEFAULT_BUS SPI3_HOST
   #else
-    #define FUTABA_VFD_DEFAULT_BUS 0                   // non-ESP32 fallback
+    #define FUTABA_VFD_DEFAULT_BUS 0
   #endif
 #endif
 
+// ---------------------------------------------------------------------------
+//  Direction constant for band()
+// ---------------------------------------------------------------------------
+enum Direction : int8_t { UP = -1, DOWN = 1 };
+
+// ---------------------------------------------------------------------------
+//  FutabaVFD class
+// ---------------------------------------------------------------------------
 class FutabaVFD {
 public:
-  // ---------------------------------------------------------------------
-  //  Construction
-  // ---------------------------------------------------------------------
-  // digits   : 8 or 16
-  // pinCS    : chip-select (SS) pin
-  // pinReset : RESET pin (only required by 8-digit module). Pass -1 if unused.
-  // spiBus   : VSPI / HSPI selector (ESP32 only). Defaults to VSPI.
-  FutabaVFD(uint8_t digits = 16,
-            int8_t  pinCS    = SS,
-            int8_t  pinReset = -1,
-            int     spiBus   = FUTABA_VFD_DEFAULT_BUS);
 
+  // ── Construction ──────────────────────────────────────────────────────────
+  // digits  : 8 or 16
+  // pinCS   : chip-select pin (active LOW)
+  // pinReset: RESET pin for 8-digit module; pass -1 if hard-wired HIGH
+  // spiBus  : VSPI / HSPI / SPI3_HOST
+  FutabaVFD(uint8_t  digits   = 16,
+            int8_t   pinCS    = SS,
+            int8_t   pinReset = -1,
+            int      spiBus   = FUTABA_VFD_DEFAULT_BUS);
   ~FutabaVFD();
 
-  // ---------------------------------------------------------------------
-  //  Lifecycle
-  // ---------------------------------------------------------------------
-  // Initialises SPI, configures the controller, optionally runs a quick
-  // visual self-test of all digits.
-  // sclk/miso/mosi default to -1 = use board defaults of the chosen bus.
-  // The self-test is OFF by default to keep begin() non-blocking.
-  bool begin(int8_t sclk        = -1,
-             int8_t miso        = -1,
-             int8_t mosi        = -1,
-             uint32_t spiHz     = FUTABA_VFD_DEFAULT_SPI_HZ,
-             bool runSelfTest   = false);
+  // ── Lifecycle ─────────────────────────────────────────────────────────────
+  // Call SPI.begin() first internally, then configure the controller.
+  // spiHz 500000 recommended when using vertical animations.
+  // selfTest: counts 9→0 on all digits to verify wiring (uses delay()).
+  bool    begin(int8_t   sclk       = -1,
+                int8_t   miso       = -1,
+                int8_t   mosi       = -1,
+                uint32_t spiHz      = FUTABA_VFD_DEFAULT_SPI_HZ,
+                bool     selfTest   = false);
+  void    end();
 
-  void end();
+  // ── Pump ──────────────────────────────────────────────────────────────────
+  // Call from loop() as often as possible.
+  // Returns true if the display state changed this call.
+  bool    update();
 
-  // ---------------------------------------------------------------------
-  //  Pump – call from loop() as often as possible.
-  //  Returns true if internal state changed (e.g. a scroll step occurred).
-  // ---------------------------------------------------------------------
-  bool update();
-
-  // ---------------------------------------------------------------------
-  //  Direct (non-blocking, no animation) commands
-  //  These do NOT call delay(). They send one SPI transaction and return.
-  // ---------------------------------------------------------------------
-  void setBrightness(uint8_t level);   // 0..255
-  void clear();
-  void show();                         // refresh / commit DCRAM
-  void standby(bool on);
-
-  // Write one ASCII char at column x (0-based). Cancels any active scroll.
-  void writeChar(uint8_t x, uint8_t c);
-
-  // Write a string starting at column x. If the string is longer than the
-  // visible width it is *truncated* (no scroll). Use printScroll() to scroll.
-  // Cancels any active scroll.
-  void writeString(uint8_t x, const String& s);
-  void writeString(uint8_t x, const char* s);
-
-  // Convenience: clear + writeString(0, s)
-  void print(const String& s);
-  void print(const char* s);
-
-  // ---------------------------------------------------------------------
-  //  Non-blocking animations
-  //  These start an animation; subsequent update() calls advance it.
-  // ---------------------------------------------------------------------
-
-  // Scroll a long string from right to left at the given step interval (ms).
-  // holdMs is the initial pause before scrolling starts (default 500ms),
-  // giving the reader time to see the beginning of the message.
-  // If enterRight is true, the text enters from the right edge of the
-  // display (like a news ticker) — holdMs is ignored in this mode.
-  // If loop_ is true the message restarts after the last char leaves the
-  // visible area. While scrolling, isScrolling() returns true.
-  void printScroll(const String& s, uint16_t stepMs = 250, bool loop_ = true,
-                   uint16_t holdMs = 500, bool enterRight = false);
-  void printScroll(const char* s,   uint16_t stepMs = 250, bool loop_ = true,
-                   uint16_t holdMs = 500, bool enterRight = false);
-
-  // Stop any running scroll animation. Display content is left as-is.
-  void stopScroll();
-  bool isScrolling() const { return _scrollActive; }
-
-  // Blink the entire display (toggles standby on/off) every periodMs.
-  // Pass 0 to disable.
-  void blink(uint16_t periodMs);
-  void stopBlink();
-  bool isBlinking() const { return _blinkActive; }
-
-  // ---------------------------------------------------------------------
-  //  Pixel-accurate VERTICAL animations (uses CGRAM)
-  //
-  //  These methods build per-frame glyphs in CGRAM slots 0..7 to create
-  //  the illusion of pixels falling/rising. They share the 8-slot CGRAM
-  //  budget, so on the 16-digit module the message can show at most 8
-  //  *distinct* characters at once. Repeated characters share a slot.
-  //  If more than 8 distinct chars are required, the call returns false
-  //  and nothing is animated.
-  //
-  //  Direction of motion (in/out/scroll) is independent of horizontal
-  //  scroll and runs through the same update() pump.
-  //  Cancels any active horizontal scroll.
-  // ---------------------------------------------------------------------
-
-  // Drop characters in from above. Each column starts entirely above
-  // the visible area and slides down to its final position.
-  // totalMs is the wall-clock time the whole animation takes.
-  // After it finishes, the result is committed as normal CGROM glyphs
-  // and CGRAM is freed.
-  bool printVerticalIn (const char* s, uint16_t totalMs = 500);
-  bool printVerticalIn (const String& s, uint16_t totalMs = 500);
-
-  // Drop the currently-displayed text out the bottom. After this finishes
-  // the display is blank.
-  bool printVerticalOut(uint16_t totalMs = 500);
-
-  // Endless vertical scroll: a stream of characters wraps continuously
-  // upward (or downward). stepMs = ms per pixel-row of motion.
-  // direction: -1 = up, +1 = down.
-  // Subject to the 8-distinct-glyphs-per-frame rule.
-  bool scrollVertical(const char* s, uint16_t stepMs = 80,
-                      int8_t direction = -1, bool loop_ = true);
-  bool scrollVertical(const String& s, uint16_t stepMs = 80,
-                      int8_t direction = -1, bool loop_ = true);
-
-  void stopVertical();
-  bool isVerticalActive() const { return _vMode != V_IDLE; }
-
-  // ---------------------------------------------------------------------
-  //  Introspection
-  // ---------------------------------------------------------------------
+  // ── Direct writes (non-blocking, one SPI transaction each) ────────────────
+  void    print(const char*   s);           // write at col 0, pad right
+  void    print(const String& s);
+  void    writeChar(uint8_t col, char c);   // single character at column
+  void    writeString(uint8_t col, const char*   s);  // truncates to width
+  void    writeString(uint8_t col, const String& s);
+  void    clear();                          // fill display with spaces
+  void    show();                           // re-send display-lights-on cmd
+  void    setBrightness(uint8_t level);     // 0..255
+  void    standby(bool on);                 // power-save; DCRAM preserved
   uint8_t digits() const { return _digits; }
 
+  // ── Horizontal scroll ─────────────────────────────────────────────────────
+  // scroll(): classic mode. Text starts left-aligned, pauses for holdMs,
+  //           then scrolls left. On each loop restart the hold re-applies.
+  void    scroll(const char*   s, uint16_t speedMs = 200, uint16_t holdMs = 500);
+  void    scroll(const String& s, uint16_t speedMs = 200, uint16_t holdMs = 500);
+
+  // ticker(): text enters from the right edge and scrolls through
+  //           continuously like a news ticker. No initial pause. Loops.
+  void    ticker(const char*   s, uint16_t speedMs = 150);
+  void    ticker(const String& s, uint16_t speedMs = 150);
+
+  void    stopScroll();
+  bool    isScrolling() const { return _scrollActive; }
+
+  // ── Blink ─────────────────────────────────────────────────────────────────
+  void    blink(uint16_t periodMs);         // toggle standby every periodMs
+  void    stopBlink();
+  bool    isBlinking() const { return _blinkActive; }
+
+  // ── Vertical: full display ────────────────────────────────────────────────
+  // flipIn(): all characters in `s` drop in from above simultaneously.
+  //   Returns false if the text needs more than 8 distinct CGRAM slots
+  //   (only possible on 16-digit with >8 distinct chars — use fewer chars
+  //   or fall back to scroll()).
+  // After completion the result is committed as plain CGROM and CGRAM freed.
+  bool    flipIn(const char*   s, uint16_t totalMs = 400);
+  bool    flipIn(const String& s, uint16_t totalMs = 400);
+
+  // flipOut(): current display content drops out the bottom.
+  //   Uses the internally tracked shadow buffer — works after any write.
+  bool    flipOut(uint16_t totalMs = 400);
+
+  // ── Vertical: single digit — split-flap effect ───────────────────────────
+  // flip(): the old character at `col` slides downward while the new
+  //   character slides in from above, both visible simultaneously.
+  //   All other columns remain completely unchanged (no flicker).
+  //   Always uses exactly 2 CGRAM slots; never exceeds the budget.
+  void    flip(uint8_t col, char newChar, uint16_t totalMs = 250);
+
+  // ── Vertical: endless rotating band ──────────────────────────────────────
+  // band(): characters rotate continuously upward (UP) or downward (DOWN).
+  //   Returns false if >8 distinct chars.
+  bool    band(const char*   s, uint16_t speedMs = 80, Direction dir = UP);
+  bool    band(const String& s, uint16_t speedMs = 80, Direction dir = UP);
+
+  // ── Vertical: stop / status ───────────────────────────────────────────────
+  void    stopVertical();
+  bool    isAnimating() const;              // true if scroll OR vertical active
+
 private:
-  // ---- low-level SPI helpers ------------------------------------------
-  void   beginTxn();
-  void   endTxn();
-  void   tx(uint8_t b);
-  void   selectLow();
-  void   selectHigh();
+  // ── SPI helpers ───────────────────────────────────────────────────────────
+  void    beginTxn();
+  void    endTxn();
+  void    tx(uint8_t b);
+  void    selectLow();
+  void    selectHigh();
 
-  // ---- scrolling state machine ----------------------------------------
-  void   advanceScroll();
-  void   renderScrollWindow(int16_t offset);
+  // ── Internal write (updates shadow buffer) ────────────────────────────────
+  void    dcramWrite(uint8_t col, uint8_t code);   // single position
+  void    dcramWriteAll(const uint8_t* codes, uint8_t n);  // n positions from col 0
 
-  // ---- charset translation (UTF-8 -> Futaba codes) --------------------
-  // Translates UTF-8 input into the device-specific 8-bit codepage in place
-  // of the destination buffer. Returns the resulting byte count.
-  size_t translateUtf8(const char* src, uint8_t* dst, size_t dstCap) const;
+  // ── Horizontal scroll internals ───────────────────────────────────────────
+  void    advanceScroll();
+  void    renderScrollWindow(int16_t offset);
 
-  // ---- vertical animation engine --------------------------------------
-  enum VMode : uint8_t { V_IDLE = 0, V_IN, V_OUT, V_SCROLL };
+  // ── UTF-8 → device codepage ───────────────────────────────────────────────
+  size_t  translateUtf8(const char* src, uint8_t* dst, size_t cap) const;
+  uint8_t translateChar(char c) const;     // single-char convenience
 
-  // Set up CGRAM slot allocation for one frame. `codes` are the device
-  // codepoints visible in this frame (length = numVisible). On success
-  // returns true and fills outSlot[i] with the slot index 0..7 to use
-  // for codes[i]. Frees-and-rebuilds the slot table from scratch.
-  // Returns false if more than 8 distinct codes are needed.
-  bool   buildSlotTable(const uint8_t* codes, uint8_t numVisible,
-                        uint8_t outSlot[]);
+  // ── CGRAM slot management ─────────────────────────────────────────────────
+  bool    buildSlotTable(const uint8_t* codes, uint8_t n, uint8_t outSlot[]);
+  void    writeCgramSlot(uint8_t slot, const uint8_t glyph[5]);
+  void    uploadAllSlots(const uint8_t slotData[8][5]);
 
-  // Upload one 5-byte glyph into the given CGRAM slot.
-  void   writeCgramSlot(uint8_t slot, const uint8_t glyph[5]);
+  // ── Vertical rendering ────────────────────────────────────────────────────
+  // renderFullFrame: used by flipIn / flipOut / band.
+  //   Writes all digit positions. pixelOffset: >0 = shifted UP, <0 = DOWN.
+  void    renderFullFrame(int8_t pixelOffset);
 
-  // Render one vertical-animation frame. `pixelOffset` is the per-pixel
-  // shift in [-7..+7]; positive = text shifted UP (used during OUT and
-  // upward SCROLL), negative = text shifted DOWN (used during IN and
-  // downward SCROLL). For SCROLL, the offset wraps.
-  void   renderVerticalFrame(int8_t pixelOffset);
+  // renderSplitFrame: used by flip().
+  //   Writes only _vFlipCol. step 0 = full old, step 7 = full new.
+  //   Intermediate steps show old sliding down / new coming from above.
+  void    renderSplitFrame(uint8_t step);
 
-  // Commit current text as plain CGROM codes (after IN finishes), so
-  // CGRAM slots are free again for other animations.
-  void   commitVerticalAsCgrom();
+  // After flipIn finishes: commit new codes to DCRAM as plain CGROM.
+  void    commitAsCgrom();
+  // After flip() finishes: commit new char to DCRAM and shadow.
+  void    commitCharAsCgrom();
 
-  // ---- members --------------------------------------------------------
-  uint8_t      _digits;
-  int8_t       _pinCS;
-  int8_t       _pinReset;
-  int          _spiBusId;
-  SPIClass*    _spi;
-  SPISettings  _spiSettings;
-  bool         _initialised;
+  // ── Glyph shift helpers ───────────────────────────────────────────────────
+  // shiftGlyph: shift all columns of a glyph by `offset` pixel rows.
+  //   +offset = UP (top rows disappear), -offset = DOWN.
+  static void shiftGlyph(const uint8_t in[5], uint8_t out[5], int8_t offset);
 
-  // scroll
-  bool         _scrollActive;
-  bool         _scrollLoop;
-  bool         _scrollHolding;       // true = in initial hold phase before scrolling
-  bool         _scrollEnterRight;    // true = text enters from right edge (ticker style)
-  uint16_t     _scrollStepMs;
-  uint16_t     _scrollHoldMs;        // initial pause before first scroll step
-  uint32_t     _scrollLastMs;
-  int16_t      _scrollPos;          // current left-edge offset into _scrollBuf (negative = text still off-screen right)
-  size_t       _scrollLen;          // valid bytes in _scrollBuf
-  uint8_t      _scrollBuf[FUTABA_VFD_SCROLL_BUF];
+  // splitGlyph: combine old and new glyph for split-flap effect.
+  //   step 0 = full old, step 7 = full new.
+  static void splitGlyph(const uint8_t oldG[5], const uint8_t newG[5],
+                          uint8_t step, uint8_t out[5]);
 
-  // blink
-  bool         _blinkActive;
-  bool         _blinkPhaseOn;       // true = display visible
-  uint16_t     _blinkPeriodMs;
-  uint32_t     _blinkLastMs;
+  // ── Members ───────────────────────────────────────────────────────────────
+  uint8_t     _digits;
+  int8_t      _pinCS;
+  int8_t      _pinReset;
+  int         _spiBusId;
+  SPIClass*   _spi;
+  SPISettings _spiSettings;
+  bool        _initialised;
 
-  // vertical animation
-  VMode        _vMode;
-  uint16_t     _vStepMs;            // ms per pixel-row step
-  uint32_t     _vLastMs;
-  int16_t      _vStep;              // current frame index (counts pixel rows)
-  int16_t      _vTotalSteps;        // total steps for IN/OUT (8 = 7 pixels + settle)
-  int8_t       _vDirection;         // for SCROLL: -1 up, +1 down
-  bool         _vLoop;              // for SCROLL
-  uint8_t      _vCodes[16];         // device codepoints currently being animated
-  uint8_t      _vCodesLen;          // visible length (clipped to _digits)
-  uint8_t      _vSlotMap[16];       // slot index per visible position
-  uint8_t      _vSlotCodes[8];      // which code lives in each CGRAM slot (0xFF = unused)
+  // Shadow buffer — mirrors DCRAM content for split-flap old-value lookup.
+  uint8_t     _shadow[16];
+
+  // Scroll
+  bool        _scrollActive;
+  bool        _scrollLoop;
+  bool        _scrollHolding;
+  bool        _scrollEnterRight;
+  uint16_t    _scrollStepMs;
+  uint16_t    _scrollHoldMs;
+  uint32_t    _scrollLastMs;
+  int16_t     _scrollPos;
+  size_t      _scrollLen;
+  uint8_t     _scrollBuf[FUTABA_VFD_SCROLL_BUF];
+
+  // Blink
+  bool        _blinkActive;
+  bool        _blinkPhaseOn;
+  uint16_t    _blinkPeriodMs;
+  uint32_t    _blinkLastMs;
+
+  // Vertical
+  enum VMode : uint8_t { V_IDLE, V_FLIP_IN, V_FLIP_OUT, V_FLIP_CHAR, V_BAND };
+  VMode       _vMode;
+  uint16_t    _vStepMs;
+  uint32_t    _vLastMs;
+  uint8_t     _vStep;
+  uint8_t     _vTotalSteps;
+  Direction   _vDir;
+  bool        _vLoop;
+
+  // Full-display vertical (flipIn / flipOut / band)
+  uint8_t     _vCodes[16];       // new codes for all positions
+  uint8_t     _vCodesLen;
+  uint8_t     _vSlotMap[16];     // CGRAM slot index per display position
+  uint8_t     _vSlotCodes[8];    // which code lives in each slot
+
+  // Single-digit vertical (flip)
+  uint8_t     _vFlipCol;
+  uint8_t     _vFlipOldCode;
+  uint8_t     _vFlipNewCode;
 };
 
 #endif // FUTABA_VFD_H
