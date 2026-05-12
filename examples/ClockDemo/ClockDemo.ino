@@ -1,18 +1,16 @@
 /*
   FutabaVFD v3.0 — ClockDemo
   ===========================
-  hh:mm:ss clock display using flip() for each digit change.
-  Only digits that actually change are animated — the colon
-  positions stay perfectly still.
-
-  Time is simulated by counting seconds from 00:00:00.
-  Replace getTime() with your RTC or NTP source.
+  hh:mm:ss clock seeded from compile time (__TIME__), no RTC needed.
+  Only digits that actually change are animated with flip(), right-to-left.
+  Since only one column can animate at a time, changed digits are queued
+  and fired one after the other. Colons never change and are never touched.
 
   ── SELECT DISPLAY ──────────────────────────────────────────────────────────
   Uncomment ONE line:
 */
-#define DISPLAY_16
-// #define DISPLAY_8
+//#define DISPLAY_16
+ #define DISPLAY_8
 // ────────────────────────────────────────────────────────────────────────────
 
 #include <FutabaVFD.h>
@@ -20,54 +18,63 @@
 #ifdef DISPLAY_16
   FutabaVFD vfd(16, /*CS*/ 5, /*RESET*/ -1);
   #define VFD_MISO 19
-  // 16-digit: centre the 8-character time string, starting at col 4
-  // "hh:mm:ss" = 8 chars, centred in 16 = col 4..11
-  #define TIME_COL 4
+  #define TIME_COL 4   // centre "hh:mm:ss" (8 chars) in 16 digits
 #else
   FutabaVFD vfd(8,  /*CS*/ 5, /*RESET*/ 19);
   #define VFD_MISO -1
-  // 8-digit: fits exactly
   #define TIME_COL 0
 #endif
 
-// ── Simulated time ───────────────────────────────────────────────────────────
-// Replace this function with your RTC or NTP time source.
-uint32_t startMs = 0;
-
-void getTime(uint8_t& hh, uint8_t& mm, uint8_t& ss) {
-  uint32_t total = (millis() - startMs) / 1000UL;
-  ss = total % 60;
-  mm = (total / 60) % 60;
-  hh = (total / 3600) % 24;
+// ── Compile-time clock seed ───────────────────────────────────────────────────
+static uint32_t compileTimeSeconds() {
+  const char* t = __TIME__;
+  uint8_t h = (t[0]-'0')*10 + (t[1]-'0');
+  uint8_t m = (t[3]-'0')*10 + (t[4]-'0');
+  uint8_t s = (t[6]-'0')*10 + (t[7]-'0');
+  return (uint32_t)h*3600u + m*60u + s;
 }
 
-// ── Digit positions in the display ───────────────────────────────────────────
-// Layout: "hh:mm:ss"
-//          01 23 45 67  (offsets from TIME_COL)
-// col TIME_COL+0 = tens of hours
-// col TIME_COL+1 = units of hours
-// col TIME_COL+2 = ':'
-// col TIME_COL+3 = tens of minutes
-// col TIME_COL+4 = units of minutes
-// col TIME_COL+5 = ':'
-// col TIME_COL+6 = tens of seconds
-// col TIME_COL+7 = units of seconds
+uint32_t startSec;
+uint32_t startMs;
 
-uint8_t prevHH = 99, prevMM = 99, prevSS = 99;   // force full refresh on first tick
-uint32_t lastSecMs = 0;
+uint32_t nowSeconds() {
+  return (startSec + (millis() - startMs) / 1000u) % 86400u;
+}
 
-// Write a digit at the given offset from TIME_COL.
-// Uses flip() if the digit changed, writeChar() on first draw.
-void updateDigit(uint8_t offset, char newChar, char& prevChar, bool firstDraw) {
-  uint8_t col = TIME_COL + offset;
-  if (firstDraw) {
-    vfd.writeChar(col, newChar);
-    prevChar = newChar;
-  } else if (newChar != prevChar) {
-    vfd.flip(col, newChar, 220);
-    prevChar = newChar;
+void formatTime(uint32_t sec, char buf[9]) {
+  uint8_t h = sec / 3600u;
+  uint8_t m = (sec % 3600u) / 60u;
+  uint8_t s = sec % 60u;
+  buf[0] = '0' + h/10;  buf[1] = '0' + h%10;
+  buf[2] = ':';
+  buf[3] = '0' + m/10;  buf[4] = '0' + m%10;
+  buf[5] = ':';
+  buf[6] = '0' + s/10;  buf[7] = '0' + s%10;
+  buf[8] = '\0';
+}
+
+// ── Flip queue ────────────────────────────────────────────────────────────────
+// Collects display columns to animate right-to-left, fires one at a time.
+struct FlipQueue {
+  uint8_t col[6];
+  char    ch[6];
+  uint8_t head  = 0;
+  uint8_t count = 0;
+
+  void clear()                   { head = 0; count = 0; }
+  bool empty() const             { return count == 0; }
+  void push(uint8_t c, char ch_) { col[head+count] = c; ch[head+count] = ch_; count++; }
+
+  void fireNext(FutabaVFD& d, uint16_t ms) {
+    if (empty()) return;
+    d.flip(col[head], ch[head], ms);
+    head++; count--;
   }
-}
+} queue;
+
+// ── State ─────────────────────────────────────────────────────────────────────
+char     prev[9];
+uint32_t lastTickSec = 0;
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
 void setup() {
@@ -76,6 +83,61 @@ void setup() {
 
   vfd.begin(/*SCLK*/ 18, /*MISO*/ VFD_MISO, /*MOSI*/ 23, /*spiHz*/ 500000);
   vfd.setBrightness(120);
+
+  startMs  = millis();
+  startSec = compileTimeSeconds();
+
+  // Draw initial time without animation
+  formatTime(startSec, prev);
+  // Write digit by digit so colons land at the right display columns
+  for (uint8_t i = 0; i < 8; ++i)
+    vfd.writeChar(TIME_COL + i, prev[i]);
+
+  lastTickSec = startSec;
+
+  Serial.print("ClockDemo — compile time: ");
+  Serial.printf("%02d:%02d:%02d  display col %d\n",
+                (int)startSec/3600, (int)(startSec%3600)/60, (int)startSec%60,
+                TIME_COL);
+}
+
+// ── Loop ──────────────────────────────────────────────────────────────────────
+void loop() {
+  vfd.update();
+
+  // Fire next queued digit as soon as the current animation finishes
+  if (!vfd.isAnimating() && !queue.empty()) {
+    queue.fireNext(vfd, 220);
+    return;
+  }
+
+  // While animating or draining queue, don't start a new tick
+  if (vfd.isAnimating() || !queue.empty()) return;
+
+  // Check if a new second has arrived
+  uint32_t sec = nowSeconds();
+  if (sec == lastTickSec) return;
+  lastTickSec = sec;
+
+  char curr[9];
+  formatTime(sec, curr);
+
+  // Build flip queue: scan right-to-left, collect changed digits
+  queue.clear();
+  for (int8_t i = 7; i >= 0; --i) {
+    if (curr[i] != prev[i] && curr[i] != ':') {
+      queue.push(TIME_COL + i, curr[i]);
+    }
+  }
+
+  memcpy(prev, curr, 9);
+
+  // Fire first animation immediately
+  queue.fireNext(vfd, 220);
+
+  Serial.printf("%02d:%02d:%02d\n",
+                (int)sec/3600, (int)(sec%3600)/60, (int)sec%60);
+}
 
   // Draw static colons once
   vfd.writeChar(TIME_COL + 2, ':');
