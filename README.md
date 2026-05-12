@@ -8,6 +8,8 @@ Supports non-blocking horizontal scroll, split-flap single-digit animation, full
 **License:** MIT  
 **Version:** 3.0 (2026)
 
+![ClockDemo](pics/clockdemo.gif)
+
 ---
 
 ## Hardware
