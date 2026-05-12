@@ -4,9 +4,11 @@ Arduino library for Futaba 8-digit and 16-digit VFD modules (M66004 controller, 
 
 Supports non-blocking horizontal scroll, split-flap single-digit animation, full-display flipIn/flipOut, and continuous vertical band — all driven from `loop()` without `delay()`.
 
-**Author:** Marc Staehli 
+**Author:** Marc Staehli  
 **License:** MIT  
 **Version:** 3.0 (2026)
+
+---
 
 ![ClockDemo](pics/clockdemo.gif)
 
@@ -32,17 +34,25 @@ vfd.begin(/*SCLK*/ 18, /*MISO*/ 19, /*MOSI*/ 23, /*spiHz*/ 500000);
 
 ## Installation
 
-Copy into your Arduino libraries folder:
+Copy the repository into your Arduino libraries folder:
 ```
 FutabaVFD/
-  FutabaVFD.h
-  FutabaVFD.cpp
-  FutabaVFD_Font5x7.h
+  library.properties
+  README.md
+  LICENSE
+  src/
+    FutabaVFD.h
+    FutabaVFD.cpp
+    FutabaVFD_Font5x7.h
   examples/
     APITest/APITest.ino
     ClockDemo/ClockDemo.ino
     FontTest/FontTest.ino
+  pics/
+    clockdemo.gif
 ```
+
+Restart the Arduino IDE after copying. The examples will appear under **File → Examples → FutabaVFD**.
 
 ---
 
@@ -201,7 +211,7 @@ Sequential test of every API call. Select display type at the top of the file wi
 
 ### ClockDemo
 
-`hh:mm:ss` clock using `flip()` for each digit change — only digits that actually change are animated. Works on both 8-digit and 16-digit displays. Select at top with `#define`.
+`hh:mm:ss` clock seeded from compile time — no RTC needed. Only digits that actually change are animated with `flip()`, right-to-left. Works on both 8-digit and 16-digit displays. Select at top with `#define`.
 
 ### FontTest
 
